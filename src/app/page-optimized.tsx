@@ -1,19 +1,30 @@
 "use client";
 
-import { useEffect, Suspense } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useProductsAPIOptimized } from "@/hooks/useProductsAPIOptimized";
 import ProductFilters from "@/components/product/ProductFilters";
 import ProductGridOptimized from "@/components/product/ProductGridOptimized";
 import NetworkErrorIndicator from "@/components/ui/NetworkErrorIndicator";
+import { useCartActions } from "@/stores/cartStore";
 
 import type { ProductFilters as ProductFiltersType } from "@/types";
+import type { NormalizedProduct } from "@/hooks/useProductsAPIOptimized";
+import type { Id } from "../../convex/_generated/dataModel";
 
-function HomeContent() {
+const DEBUG = process.env.NEXT_PUBLIC_DEBUG === "true" || process.env.NODE_ENV !== "production";
+
+function HomeContentOptimized() {
   const searchParams = useSearchParams();
   const categoryFromUrl = searchParams.get("categoria");
 
-  // Hook otimizado: paginação por chunks + cache + debounce
+  // Cart store
+  const { addToCart } = useCartActions();
+
+  // Favorites state (pode ser movido para um store depois)
+  const [favoriteProducts, setFavoriteProducts] = useState<Set<string>>(new Set());
+
+  // Hook otimizado - deve vir antes do useEffect que usa updateFilters
   const { products, isLoading, error, hasMore, totalCount, loadMore, refresh, updateFilters } =
     useProductsAPIOptimized({
       initialFilters: {
@@ -27,7 +38,7 @@ function HomeContent() {
       },
     });
 
-  // Sincroniza filtros quando a categoria na URL muda
+  // Update filters when URL changes - agora updateFilters já está definida
   useEffect(() => {
     const newCategory = categoryFromUrl || "";
     if (newCategory) {
@@ -44,15 +55,51 @@ function HomeContent() {
   }, [categoryFromUrl, updateFilters]);
 
   const handleFiltersChange = (newFilters: ProductFiltersType) => {
-    updateFilters({
-      search: newFilters.search,
-      category: newFilters.category,
-      brand: newFilters.brand,
-      minPrice: newFilters.minPrice,
-      maxPrice: newFilters.maxPrice,
-      sortBy: newFilters.sortBy,
-      sortOrder: newFilters.sortOrder,
+    updateFilters(newFilters);
+  };
+
+  const handleAddToCart = (product: NormalizedProduct) => {
+    try {
+      addToCart(
+        {
+          _id: { __tableName: "products" } as unknown as Id<"products">,
+          externalId: product.externalId,
+          name: product.name,
+          price: product.price,
+          image: product.image || "",
+          availableQuantity: product.availableQuantity,
+          category: product.category,
+          brand: product.brand,
+          unit: "un",
+          isActive: true,
+          description: product.description || "",
+          lastSyncAt: Date.now(),
+        },
+        1
+      );
+
+      // Feedback visual (pode ser implementado com toast)
+      if (DEBUG) console.log(`Produto ${product.name} adicionado ao carrinho`);
+    } catch (error) {
+      if (DEBUG) console.error("Erro ao adicionar produto ao carrinho:", error);
+    }
+  };
+
+  const handleToggleFavorite = (product: NormalizedProduct) => {
+    setFavoriteProducts((prev) => {
+      const newFavorites = new Set(prev);
+      if (newFavorites.has(product.externalId)) {
+        newFavorites.delete(product.externalId);
+      } else {
+        newFavorites.add(product.externalId);
+      }
+      return newFavorites;
     });
+  };
+
+  const handleViewDetails = (product: NormalizedProduct) => {
+    // Implementar navegação para página de detalhes
+    if (DEBUG) console.log("Ver detalhes do produto:", product.name);
   };
 
   return (
@@ -63,12 +110,12 @@ function HomeContent() {
           <div className="text-center">
             <h1 className="text-4xl md:text-5xl font-bold mb-4">Distribuidora Mirô</h1>
             <p className="text-xl md:text-2xl text-primary-100 mb-8">
-              Catálogo completo com mais de 2.000 produtos
+              Catálogo otimizado com carregamento inteligente
             </p>
             <div className="max-w-2xl mx-auto">
               <p className="text-lg text-primary-50">
-                Encontre os melhores produtos com preços competitivos. Adicione ao carrinho e
-                finalize pelo WhatsApp com nossa equipe especializada.
+                Navegue por nosso catálogo com performance otimizada. Os produtos são carregados
+                progressivamente para uma experiência mais rápida e fluida.
               </p>
             </div>
           </div>
@@ -89,11 +136,12 @@ function HomeContent() {
         <ProductFilters
           filters={{
             categories: [],
-            category: categoryFromUrl || "",
-            minPrice: undefined,
-            maxPrice: undefined,
             availability: "all",
             search: "",
+            category: "",
+            brand: "",
+            minPrice: undefined,
+            maxPrice: undefined,
             sortBy: "name",
             sortOrder: "asc",
           }}
@@ -102,7 +150,7 @@ function HomeContent() {
         />
       </div>
 
-      {/* Products Section com Infinite Scroll e Lazy Images */}
+      {/* Products Section */}
       <ProductGridOptimized
         products={products}
         isLoading={isLoading}
@@ -110,6 +158,10 @@ function HomeContent() {
         onLoadMore={loadMore}
         error={error}
         onRetry={refresh}
+        onAddToCart={handleAddToCart}
+        onToggleFavorite={handleToggleFavorite}
+        onViewDetails={handleViewDetails}
+        favoriteProducts={favoriteProducts}
         showQuickActions={true}
         showStock={true}
       />
@@ -117,16 +169,19 @@ function HomeContent() {
   );
 }
 
-export default function Home() {
+export default function HomeOptimized() {
   return (
     <Suspense
       fallback={
         <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-          <div className="text-lg">Carregando...</div>
+          <div className="flex items-center space-x-3">
+            <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
+            <div className="text-lg text-gray-600">Carregando catálogo otimizado...</div>
+          </div>
         </div>
       }
     >
-      <HomeContent />
+      <HomeContentOptimized />
     </Suspense>
   );
 }
